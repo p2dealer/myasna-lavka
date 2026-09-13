@@ -27,7 +27,7 @@ export default async function AdminDashboard({
   Promise.resolve([]), // Защита от ошибок groupBy для категорий
 ]);
 
-  const totalSales = categorySales.reduce((s: number, r: any) => s + (r._sum?.price || 0), 0)
+  const totalSales = (categorySales as any[]).reduce((s, r) => s + (r._sum?.lineTotal ?? 0), 0);
 
   return (
     <div className="flex flex-col gap-4">
