@@ -172,3 +172,5 @@ if (Array.isArray(categorySales)) {
     </div>
   );
 }
+
+
