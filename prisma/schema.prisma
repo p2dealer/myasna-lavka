@@ -1,0 +1,523 @@
+// М'ясна Лавка — схема бази даних
+// Гроші зберігаються цілим числом у копійках. Вага — цілим числом у грамах.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Каталог ────────────────────────────────────
+
+enum PricingMode {
+  PER_UNIT // за штуку
+  PER_PACKAGE // за упаковку фіксованої ваги
+  PER_100G // за 100 г
+  PER_KG // за кілограм, з вибором ваги
+  SET // набір за фіксовану ціну
+}
+
+model Category {
+  id             String     @id @default(cuid())
+  slug           String     @unique
+  name           String
+  description    String?
+  imageUrl       String?
+  sortOrder      Int        @default(0)
+  isActive       Boolean    @default(true)
+  seoTitle       String?
+  seoDescription String?
+  parentId       String?
+  parent         Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Category[] @relation("CategoryTree")
+  products       Product[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([parentId, sortOrder])
+  @@index([isActive])
+}
+
+model Product {
+  id          String      @id @default(cuid())
+  slug        String      @unique
+  sku         String      @unique
+  name        String
+  shortDescription String?
+  description String?
+  categoryId  String
+  category    Category    @relation(fields: [categoryId], references: [id])
+  meat        String // beef | pork | chicken | turkey | lamb
+  type        String // steak | fillet | mince | ribs | sausage | smoked | semi | bbq | set
+  pricingMode PricingMode @default(PER_KG)
+
+  // Ціни в копійках за одиницю, визначену pricingMode
+  price      Int
+  oldPrice   Int?
+  costPrice  Int?
+  packWeightG Int? // для PER_PACKAGE та SET — вага упаковки
+
+  // Залишок: грами для вагових товарів, штуки для решти
+  stock             Int @default(0)
+  lowStockThreshold Int @default(0)
+
+  rating      Float @default(0)
+  reviewCount Int   @default(0)
+
+  isActive      Boolean @default(true)
+  isHit         Boolean @default(false)
+  isNew         Boolean @default(false)
+  isRecommended Boolean @default(false)
+
+  origin            String?
+  producer          String?
+  composition       String?
+  storageConditions String?
+  shelfLifeDays     Int?
+  kcal              Int?
+  protein           Int?
+  fat               Int?
+  carbs             Int?
+  cookingTips       String?
+
+  seoTitle       String?
+  seoDescription String?
+
+  images        ProductImage[]
+  weightOptions WeightOption[]
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  favorites     Favorite[]
+  reviews       Review[]
+  movements     InventoryMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId, isActive])
+  @@index([isActive, isHit])
+  @@index([isActive, isNew])
+  @@index([meat])
+  @@index([type])
+  @@index([price])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String?
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+
+  @@index([productId, sortOrder])
+}
+
+model WeightOption {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  grams     Int
+  label     String
+  isDefault Boolean @default(false)
+
+  @@unique([productId, grams])
+}
+
+// ─────────────────────────────── Продажі ────────────────────────────────────
+
+model Cart {
+  id        String     @id @default(cuid())
+  token     String     @unique
+  userId    String?
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  couponId  String?
+  coupon    Coupon?    @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  items     CartItem[]
+  expiresAt DateTime
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+model CartItem {
+  id                 String  @id @default(cuid())
+  cartId             String
+  cart               Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId          String
+  product            Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity           Int     @default(1)
+  grams              Int     @default(0)
+  unitPriceSnapshot  Int
+
+  @@unique([cartId, productId, grams])
+  @@index([cartId])
+}
+
+enum OrderStatus {
+  NEW
+  CONFIRMED
+  PREPARING
+  PACKED
+  HANDED_TO_COURIER
+  ON_THE_WAY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model Order {
+  id     String @id @default(cuid())
+  number String @unique
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  status        OrderStatus   @default(NEW)
+  paymentStatus PaymentStatus @default(PENDING)
+
+  customerFirstName String
+  customerLastName  String
+  phone             String
+  email             String?
+
+  deliveryMethodCode String
+  deliveryMethodName String
+  city               String
+  street             String?
+  house              String?
+  apartment          String?
+  branch             String? // відділення Нової Пошти
+  paymentMethodCode  String
+  paymentMethodName  String
+
+  subtotal    Int
+  discount    Int @default(0)
+  deliveryFee Int @default(0)
+  total       Int
+
+  couponCode       String?
+  comment          String?
+  adminNote        String?
+  paymentProvider  String?
+  paymentReference String?
+
+  items  OrderItem[]
+  events OrderStatusEvent[]
+  movements InventoryMovement[]
+  redemptions CouponRedemption[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  paidAt    DateTime?
+
+  @@index([status, createdAt])
+  @@index([phone])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  nameSnapshot  String
+  skuSnapshot   String
+  imageSnapshot String?
+  pricingMode   PricingMode
+  unitPrice     Int
+  grams         Int         @default(0)
+  quantity      Int         @default(1)
+  lineTotal     Int
+
+  @@index([orderId])
+}
+
+model OrderStatusEvent {
+  id        String       @id @default(cuid())
+  orderId   String
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  from      OrderStatus?
+  to        OrderStatus
+  actorId   String?
+  note      String?
+  createdAt DateTime     @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+// ─────────────────────────────── Клієнти ────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  phone        String?
+  passwordHash String
+  firstName    String?
+  lastName     String?
+  bonusBalance Int        @default(0)
+  isBlocked    Boolean    @default(false)
+  addresses    Address[]
+  orders       Order[]
+  favorites    Favorite[]
+  reviews      Review[]
+  carts        Cart[]
+  resetTokens  PasswordResetToken[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Address {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String?
+  city      String
+  street    String?
+  house     String?
+  apartment String?
+  isDefault Boolean @default(false)
+
+  @@index([userId])
+}
+
+model Favorite {
+  userId    String
+  productId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, productId])
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Review {
+  id         String       @id @default(cuid())
+  productId  String
+  product    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  authorName String
+  rating     Int
+  text       String
+  status     ReviewStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+
+  @@index([productId, status])
+}
+
+enum AdminRole {
+  OWNER
+  MANAGER
+  CONTENT
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         AdminRole @default(MANAGER)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  auditLogs    AuditLog[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model AuditLog {
+  id        String     @id @default(cuid())
+  actorId   String?
+  actor     AdminUser? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  createdAt DateTime   @default(now())
+
+  @@index([createdAt])
+}
+
+// ────────────────────────────── Маркетинг ───────────────────────────────────
+
+enum CouponType {
+  PERCENT
+  FIXED
+  FREE_SHIPPING
+}
+
+model Coupon {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  type          CouponType
+  value         Int        @default(0) // відсоток або копійки
+  minOrderTotal Int        @default(0)
+  usageLimit    Int?
+  usedCount     Int        @default(0)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  isActive      Boolean    @default(true)
+  scopeCategoryIds String[] @default([])
+  scopeProductIds  String[] @default([])
+  carts         Cart[]
+  redemptions   CouponRedemption[]
+  createdAt     DateTime   @default(now())
+}
+
+model CouponRedemption {
+  id        String   @id @default(cuid())
+  couponId  String
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount    Int
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, orderId])
+}
+
+model Promotion {
+  id         String   @id @default(cuid())
+  name       String
+  kind       String // percent | fixed | bundle
+  value      Int      @default(0)
+  targetType String // product | category | all
+  targetIds  String[] @default([])
+  priority   Int      @default(0)
+  startsAt   DateTime?
+  endsAt     DateTime?
+  isActive   Boolean  @default(true)
+}
+
+model Banner {
+  id          String  @id @default(cuid())
+  placement   String // hero | promo | side
+  title       String?
+  subtitle    String?
+  imageUrl    String?
+  ctaLabel    String?
+  ctaUrl      String?
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+}
+
+model Subscriber {
+  id        String   @id @default(cuid())
+  channel   String // email | telegram | viber
+  contact   String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([channel, contact])
+}
+
+// ────────────────────────── Магазин і система ───────────────────────────────
+
+model SiteSetting {
+  key       String   @id
+  value     String
+  group     String   @default("general")
+  updatedAt DateTime @updatedAt
+}
+
+model DeliveryMethod {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String
+  description String?
+  price       Int     @default(0)
+  freeFrom    Int? // копійки; null — використовується глобальний поріг
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+  zones       DeliveryZone[]
+}
+
+model DeliveryZone {
+  id               String         @id @default(cuid())
+  deliveryMethodId String
+  deliveryMethod   DeliveryMethod @relation(fields: [deliveryMethodId], references: [id], onDelete: Cascade)
+  name             String
+  cities           String[]       @default([])
+  price            Int            @default(0)
+  freeFrom         Int?
+}
+
+model PaymentMethod {
+  id           String  @id @default(cuid())
+  code         String  @unique
+  name         String
+  provider     String?
+  instructions String?
+  sortOrder    Int     @default(0)
+  isActive     Boolean @default(true)
+}
+
+enum MovementReason {
+  ORDER
+  MANUAL
+  RESTOCK
+  WRITE_OFF
+  CANCELLATION
+}
+
+model InventoryMovement {
+  id        String         @id @default(cuid())
+  productId String
+  product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  delta     Int // грами або штуки, залежно від pricingMode товару
+  reason    MovementReason
+  orderId   String?
+  order     Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  note      String?
+  createdAt DateTime       @default(now())
+
+  @@index([productId, createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  channel   String // email | telegram
+  recipient String
+  subject   String?
+  body      String
+  status    String   @default("pending") // pending | sent | failed
+  attempts  Int      @default(0)
+  orderId   String?
+  createdAt DateTime @default(now())
+  sentAt    DateTime?
+
+  @@index([status, createdAt])
+}
